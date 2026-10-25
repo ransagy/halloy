@@ -16,6 +16,7 @@ Added:
 - Condensed message gained support for summary via `buffer.server_messages.condense.format = "summary"`
 - `sidebar.wrap` to wrap top/bottom sidebar buffers into multiple rows
 - Horizontal sidebars can be scrolled with the mouse wheel without holding Shift
+- `buffer.nickname.exclude` to prevent configured nicknames from being detected and linked in message text, including existing history
 
 Fixed:
 
