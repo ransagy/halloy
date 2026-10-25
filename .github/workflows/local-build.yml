@@ -1,0 +1,40 @@
+name: "Local Build (both PRs)"
+
+# Fork-only helper: builds a portable halloy.exe from a combined branch and
+# uploads it as an artifact. Never runs on squidowl/halloy.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows binary
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Upload halloy.exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: halloy-windows
+          path: target/release/halloy.exe
+          if-no-files-found: error
+          retention-days: 30
