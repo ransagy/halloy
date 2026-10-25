@@ -4,6 +4,9 @@ name: "Local Build (both PRs)"
 # uploads it as an artifact. Never runs on squidowl/halloy.
 
 on:
+  push:
+    branches:
+      - local/both-prs
   workflow_dispatch:
 
 permissions:
