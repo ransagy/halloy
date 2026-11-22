@@ -1,0 +1,150 @@
+name: "Local Build"
+
+# Fork-only helper: builds Linux and Windows binaries from local/patched and
+# publishes them as a rolling prerelease. Never runs on squidowl/halloy.
+#
+# This workflow intentionally lives on a non-default branch (local/ci). Push
+# and tag events run workflows from the pushed ref, so no commit to main is
+# needed. workflow_dispatch is included for future use, but GitHub only
+# registers it once the workflow exists on the default branch; use a
+# local-build-* tag push (or re-run a previous run) to rebuild manually.
+
+on:
+  push:
+    branches:
+      - local/patched
+    tags:
+      - "local-build-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Build Linux binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install $(cat .github/linux-deps.txt) git
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: local-build-linux
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Package
+        run: bash scripts/package-linux.sh package
+
+      - name: Stage artifact
+        run: |
+          mkdir -p artifacts
+          cp target/packaging/halloy-*-x86_64-linux.tar.gz artifacts/halloy-linux-x86_64.tar.gz
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: halloy-linux-x86_64-${{ github.sha }}
+          path: artifacts/halloy-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+
+  windows:
+    name: Build Windows binary
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: local-build-windows
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/halloy.exe -DestinationPath halloy-windows-x86_64.zip
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: halloy-windows-x86_64-${{ github.sha }}
+          path: halloy-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish local-latest prerelease
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs:
+      - linux
+      - windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Add checksums
+        run: |
+          cd artifacts
+          sha256sum halloy-linux-x86_64.tar.gz halloy-windows-x86_64.zip > SHA256SUMS
+          ls -lh
+
+      - name: Move local-latest tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa local-latest -m "Local patched build" "$GITHUB_SHA"
+          git push --force origin local-latest
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="Built from ${GITHUB_SHA} (main + nickname-exclude + horizontal-sidebar)."
+          if ! gh release view local-latest >/dev/null 2>&1; then
+            gh release create local-latest \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Local patched build" \
+              --notes "$notes"
+          fi
+          gh release upload local-latest artifacts/* --clobber
+          gh release edit local-latest \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Local patched build" \
+            --notes "$notes"
